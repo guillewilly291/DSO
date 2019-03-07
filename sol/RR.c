@@ -1,6 +1,6 @@
 /**
-    DSO Practica 1, RR.c
-    Descripción: Planificador Round Robin
+    DSO Practica 1, RRF.c
+    Descripción: Planificador Round Robin/FIFO con prioridades.
 
     @author Juan Abascal
     @author Daniel Gonzalez
@@ -22,6 +22,7 @@ long hungry = 0L;
 TCB* scheduler();
 void activator();
 void timer_interrupt(int sig);
+void enqueue_adv(TCB* item);
 
 /* Array of state thread control blocks: the process allows a maximum of N threads */
 static TCB t_state[N];
@@ -30,15 +31,17 @@ static TCB* running;
 static int current = 0;
 /* Variable indicating if the library is initialized (init == 1) or not (init == 0) */
 static int init=0;
-// Se declara la cola que se va a utilizar
-struct queue * q;
+// Se declaran las colas que se van a utilizar. De alta prioridad y de baja prioridad.
+struct queue * q_hp;
+struct queue * q_lp;
 
 /* Initialize the thread library */
 void init_mythreadlib() {
   int i;
 
-  // Inicializamos la cola que se va a utilizar durante el programa al inicializar mythreadlib.
-  q = queue_new();
+  // Se inicializan las colas de alta y baja prioridad.
+  q_hp = queue_new();
+  q_lp = queue_new();
 
   t_state[0].state = INIT;
   t_state[0].priority = LOW_PRIORITY;
@@ -67,6 +70,7 @@ void init_mythreadlib() {
 /* Create and intialize a new thread with body fun_addr and one integer argument */
 int mythread_create (void (*fun_addr)(),int priority)
 {
+
   int i;
   if (!init) { init_mythreadlib(); init=1;}
   for (i=0; i<N; i++)
@@ -88,10 +92,19 @@ int mythread_create (void (*fun_addr)(),int priority)
   t_state[i].tid = i;
   t_state[i].run_env.uc_stack.ss_size = STACKSIZE;
   t_state[i].run_env.uc_stack.ss_flags = 0;
+
+
   makecontext(&t_state[i].run_env, fun_addr, 1);
 
-  // Encolamos el proceso que se acaba de crear
-  enqueue(q, &t_state[i]);
+  // Se encola el proceso recien creado
+  enqueue_adv(&t_state[i]);
+
+  // Si el proceso que se está ejecutando es de baja prioridad y entra en el sistema
+  // uno de alta prioridad, este último se activa inmediatamente.
+  if(t_state[i].priority == HIGH_PRIORITY && running->priority == LOW_PRIORITY) {
+    disable_interrupt();
+    activator(scheduler());
+  }
 
   return i;
 } /****** End my_thread_create() ******/
@@ -106,11 +119,9 @@ void mythread_exit() {
 
   printf("*** THREAD %i FINISHED\n", tid);
 
-  // Se comprueba si queda algún proceso en la cola, si es así se llama al
-  // scheduler para que nos devuelva el siguiente proceso que hay que
-  // ejecutar y este se llama a la función activator para ejecutar ese proceso.
-  // Si ya no quedan hilos en la cola, el programa termina.
-  if(queue_empty(q) == 0){
+  // Si ninguna de las colas de procesos está vacia se le solicita al
+  // planificador el siguiente proceso y se le activa.
+  if(queue_empty(q_hp) == 0 || queue_empty(q_lp) == 0){
     disable_interrupt();
     TCB* next = scheduler();
     activator(next);
@@ -118,7 +129,7 @@ void mythread_exit() {
 
   printf("*** FINISH \n");
 
-  // Indicamos que el programa se ha terminado sin errores
+  // El programa termina sin errores aquí.
   exit(0);
 }
 
@@ -142,15 +153,17 @@ int mythread_gettid(){
 }
 
 /* Timer interrupt  */
-void timer_interrupt(int sig){
+void timer_interrupt(int sig)
+{
   // Cada vez que se produce una interrupción de reloj, el proceso que está
   // ejecutandose ve reducido el número de ticks que le quedan para terminar su
   // rodaja.
   running->ticks--;
 
-  // Cuando se termina el tiempo de procesador disponible para el proceso en
-  // ejecución se cambia al siguiente proceso.
-  if(running->ticks == 0) {
+  // Las rodajas solo se aplican a los procesos de baja prioridad, los de alta
+  // prioridad una vez entran en el sistema deben terminar.
+  if(running->ticks == 0 && running->priority == LOW_PRIORITY) {
+    // Se vuelve a poner el valor de ticks por defecto
     running->ticks = QUANTUM_TICKS;
     disable_interrupt();
     TCB* next = scheduler();
@@ -158,16 +171,20 @@ void timer_interrupt(int sig){
   }
 }
 
-/* Scheduler: returns the next thread to be executed (ROUND ROBIN) */
+/* Scheduler: returns the next thread to be executed */
 TCB* scheduler(){
   // Si el proceso todavía no ha terminado, se le pone al final de la cola.
   if(running->state!=FREE){
-    enqueue(q, running);
+    enqueue_adv(running);
   }
 
-  // El siguiente proceso es aquel que está el primero en la cola.
-  TCB* next = dequeue(q);
-  return next;
+  // Se desencola el siguiente proceso de la cola de alta prioridad si existe y
+  // si no se desencola el siguiente proceso de la cola de baja prioridad.
+  if(queue_empty(q_hp) != 1) {
+    return dequeue(q_hp);
+  } else {
+    return dequeue(q_lp);
+  }
   exit(1);
 }
 
@@ -180,21 +197,36 @@ void activator(TCB* next){
   current = next->tid;
   running = next;
 
-  // Hay que diferenciar el cambio de contexto para un hilo que ha terminado y
-  // para un hilo que todavía no ha terminado.
+  // Hay que diferenciar el cambio de contexto para un hilo que ha terminado,
+  // para un hilo que todavía no ha terminado y para cuando un hilo de baja
+  // prioridad es expulsado por uno de alta prioridad.
   if(antiguo->state==FREE){
-    printf("*** THREAD %i FINISHED: SET CONTEXT OF %i \n", antiguo->tid, current);
-
-    // Hacemos un cambio de contexto mediante set porque el hilo anterior ya
-    // ha terminado.
-    enable_interrupt();
+    printf("*** THREAD %i FINISHED: SET CONTEXT OF %i \n", antiguo->tid, next->tid);
+    // Hacemos un cambio de contexto mediante set
+    if(next->priority == LOW_PRIORITY) enable_interrupt();
     setcontext (&(next->run_env));
-  } else {
-    printf("*** SWAPCONTEXT FROM %i TO %i\n", antiguo->tid, current);
+  } else if(antiguo->priority == LOW_PRIORITY && running->priority == HIGH_PRIORITY) {
+    printf("*** THREAD %i EJECTED: SET CONTEXT OF %i\n", antiguo->tid, running->tid);
 
     // Hacemos un cambio de contexto mediante swap para que el hilo anterior
     // pueda continuar con su ejecución después.
-    enable_interrupt();
+    if(next->priority == LOW_PRIORITY) enable_interrupt();
+    swapcontext (&(antiguo->run_env),&(running->run_env));
+  } else {
+    printf("*** SWAPCONTEXT FROM %i TO %i\n", antiguo->tid, next->tid);
+    // Hacemos un cambio de contexto mediante swap para que el hilo anterior
+    // pueda continuar con su ejecución después.
+    if(next->priority == LOW_PRIORITY) enable_interrupt();
     swapcontext (&(antiguo->run_env),&(next->run_env));
+  }
+}
+
+// Función que sirve para encolar sin tener que indicar la cola en la que se
+// va a realizar el encolamiento.
+void enqueue_adv(TCB* item) {
+  if(item->priority == LOW_PRIORITY){
+    enqueue(q_lp, item);
+  } else {
+    enqueue(q_hp, item);
   }
 }

@@ -83,7 +83,7 @@ int main(int argc, char *argv[])
     exit(-1);
   }
 
-  if((m = mythread_create(fun2,HIGH_PRIORITY)) == -1){
+  if((m = mythread_create(fun2,LOW_PRIORITY)) == -1){
     printf("thread failed to initialize\n");
     exit(-1);
   }
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
      for (b=0; b<30000000; ++b);
   }	
  
-  if((a =  mythread_create(fun1,HIGH_PRIORITY)) == -1){
+  if((a =  mythread_create(fun1,LOW_PRIORITY)) == -1){
     printf("thread failed to initialize\n");
     exit(-1);
   }
