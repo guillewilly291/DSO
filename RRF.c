@@ -32,14 +32,14 @@ static void idle_function()
   while (1);
 }
 
-struct queue *low;
-struct queue *high;
+struct queue *low; /*declaramos una cola para los procesos de alta prioridad*/
+struct queue *high;/*declaramos una cola para los procesos de baja prioridad*/
 
 /* Initialize the thread library */
 void init_mythreadlib()
 {
   int i;
-  low = queue_new();
+  low = queue_new();/*inicializamos las respectivas colas*/
   high = queue_new();
 
   /* Create context for the idle thread */
@@ -108,7 +108,7 @@ int mythread_create(void (*fun_addr)(), int priority)
   t_state[i].state = INIT;
   t_state[i].priority = priority;
   t_state[i].function = fun_addr;
-  t_state[i].ticks = QUANTUM_TICKS;
+  t_state[i].ticks = QUANTUM_TICKS;/*asignamos el tamaño de la rodaja a cada thread que se crea*/
   t_state[i].run_env.uc_stack.ss_sp = (void *)(malloc(STACKSIZE));
   if (t_state[i].run_env.uc_stack.ss_sp == NULL)
   {
@@ -120,28 +120,29 @@ int mythread_create(void (*fun_addr)(), int priority)
   t_state[i].run_env.uc_stack.ss_flags = 0;
   makecontext(&t_state[i].run_env, fun_addr, 1);
 
-  if (t_state[i].priority == LOW_PRIORITY)
+  if (t_state[i].priority == LOW_PRIORITY)/*si la prioridad es baja, encolamos en la cola de baja prioridad*/
   {
 
     enqueue(low, &t_state[i]);
   }
-  else
+  else if(t_state[i].priority != HIGH_PRIORITY)/*si la prioridad es alta, encolamos en la cola de alta prioridad*/
   {
-    if (t_state[i].priority != HIGH_PRIORITY)
-    {
+     enqueue(high, &t_state[i]);
+  }else{/*si la prioridad es otra---error*/
       perror("No se deben introducir otro tipo de prioridades");
       exit(1);
-    }
-
-    enqueue(high, &t_state[i]);
   }
+   
+
+   
+  
   /* si se estan creando los threads y se empieza a ejecutar uno de baja prioridad 
  y de repente aparece uno de alta, hay que cambiarlo  
 */
   if (t_state[i].priority == HIGH_PRIORITY && running->priority == LOW_PRIORITY)
   {
     	disable_interrupt();
-	TCB *procesoSiguiente = scheduler();
+	    TCB *procesoSiguiente = scheduler();
     	activator(procesoSiguiente);
   }
 
@@ -169,7 +170,7 @@ void mythread_exit()
   t_state[tid].state = FREE;
   free(t_state[tid].run_env.uc_stack.ss_sp);
 
-  if (!queue_empty(high) || !queue_empty(low))
+  if (!queue_empty(high) || !queue_empty(low))/*si alguna de las colas tiene procesos llamamos al planificador y al activador con el proceso que este ultimo nos devuelva*/
   {
     
     disable_interrupt();
@@ -208,17 +209,17 @@ int mythread_gettid()
 /* FIFO para alta prioridad, RR para baja*/
 TCB *scheduler()
 {
-
+/* Si el proceso que se estaba ejecutando no se ha acabado
+    encolamos en la lista dicho proceso */
   if (running->state != FREE)
   {
-   
+   /*si el proceso en ejecucion es de baja prioridad lo encolamos en la de baja prioridad-- realmente uno de alta prioridad jamas se encolaria de nuevo*/
     if(running->priority == LOW_PRIORITY)
     {     
       enqueue(low, running);     
     }
   }
-	/*printf("Estado de la cola de HIGH: %d , estado de la cola de LOW: %d \n",queue_empty(high),queue_empty(low) );*/
-	
+	/*obtenemos un nuevo proceso siempre que las colas no esten vacía, intententando siempre recuperar uno de alta prioridad primero*/
   if (!queue_empty(high) || !queue_empty(low))
   {
     TCB *procesoSiguiente;
@@ -240,7 +241,8 @@ TCB *scheduler()
 void timer_interrupt(int sig)
 {
   running->ticks--; /* Reducimos la rodaja en 1*/
-  if (running->ticks == 0 && running->priority == LOW_PRIORITY)
+  if (running->ticks == 0 && running->priority == LOW_PRIORITY)/*Si la rodaja ha terminado y el proceso actual es de prioridad baja,se desactivan las interrupciones para proteger una zona critica,
+                                    para despues llamar al scheduler y obtener un nuevo proceso */
   {
     running->ticks = QUANTUM_TICKS;
     disable_interrupt();
@@ -257,18 +259,18 @@ void activator(TCB *next)
   current = next->tid;
   running = next;
 
-  if (procesoActual->state == FREE)
+  if (procesoActual->state == FREE) /*Si el proceso en marcha termina imprimimos por pantalla y ponemos el contexto del nuevo */
   {
-    printf("*** THREAD %d TERMINATED : SETCONTEXT OF %d\n", procesoActual->tid, next->tid);
-    if (next->priority == LOW_PRIORITY)
+    printf("*** THREAD %d TERMINATED : SETCONTEXT OF %d\n", procesoActual->tid, next->tid); 
+    if (next->priority == LOW_PRIORITY)/* en  caso de que sea de baja prioridad el nuevo, reactivamos las interrupciones, en caso de alta no, pues se tiene que ejecutar hasta su fin */
     {
       enable_interrupt();
     }
-    setcontext(&(next->run_env));
+    setcontext(&(next->run_env));/* se pone el contexto del nuevo*/
   }
   else
   {
-    if (procesoActual->priority == LOW_PRIORITY && next->priority == HIGH_PRIORITY)
+    if (procesoActual->priority == LOW_PRIORITY && next->priority == HIGH_PRIORITY)/*si el thread actual es de baja y el siogoente es de alta imprimimos un mensaje, y si son los dos baja, uno distinto*/
     {
 
       printf("*** THREAD %d PREEMTED : SETCONTEXT OF %d\n", procesoActual->tid, next->tid);
@@ -279,7 +281,7 @@ void activator(TCB *next)
       printf("*** SWAPCONTEXT FROM %d TO %d\n", procesoActual->tid, next->tid);
     }
 
-    if (next->priority == LOW_PRIORITY)
+    if (next->priority == LOW_PRIORITY)/* en  caso de que sea de baja prioridad el nuevo, reactivamos las interrupciones, en caso de alta no, pues se tiene que ejecutar hasta su fin */
     {
       enable_interrupt();
     }

@@ -32,7 +32,7 @@ static void idle_function(){
   while(1);
 }
 
-struct queue *q;
+struct queue *q; /*declaramos una cola para los procesos, sean de alta o baja prioridad */ 
 
 
 
@@ -97,7 +97,7 @@ int mythread_create (void (*fun_addr)(),int priority)
   t_state[i].state = INIT;
   t_state[i].priority = priority;
   t_state[i].function = fun_addr;
-  t_state[i].ticks= QUANTUM_TICKS;
+  t_state[i].ticks= QUANTUM_TICKS; /*asignamos la rodaja que va a tener cada proceso   */
   t_state[i].run_env.uc_stack.ss_sp = (void *)(malloc(STACKSIZE));
   if(t_state[i].run_env.uc_stack.ss_sp == NULL){
     printf("*** ERROR: thread failed to get stack space\n");
@@ -109,7 +109,7 @@ int mythread_create (void (*fun_addr)(),int priority)
   makecontext(&t_state[i].run_env, fun_addr, 1); 
 
 
-  enqueue(q,&t_state[i]);
+  enqueue(q,&t_state[i]); /*Se encolan los procesos a la unica lista, ya que no tenemos en cuenta la prioridad*/
   return i;
 
 } /****** End my_thread_create() ******/
@@ -165,17 +165,19 @@ int mythread_gettid(){
 }
 
 
-/* FIFO para alta prioridad, RR para baja*/
+/*  RR para cualquier tipo de proceso, sin importar prioridad*/
 TCB* scheduler(){
-  
-  if(running->state!=FREE){
-	enqueue(q,running);	
+   /* Si el proceso que se estaba ejecutando no se ha acabado
+    encolamos en la lista dicho proceso */
+  if(running->state!=FREE){ 
+	 enqueue(q,running);	
   }
+  /* Si la cola de procesos no esta vacia, desencolamos el primero que haya*/
   if(!queue_empty(q)){
-
   TCB* procesoSiguiente = dequeue(q);		
   return procesoSiguiente;
   }	
+ /* Aqui no deberia llegar, ya que antes de llamar al scheduler se comprueba si la lista esta vacia */
  exit(1);
 }
 
@@ -183,30 +185,33 @@ TCB* scheduler(){
 /* Timer interrupt  */
 void timer_interrupt(int sig)
 {
-      running->ticks--; /* Reducimos la rodaja en 1*/
-      if (running->ticks ==  0){	
-		running->ticks = QUANTUM_TICKS;	
-		disable_interrupt();
+      /* Cada vez que hay un timer_interrupt se reduce la rodaja,
+       y se comprueba si se ha terminado esta misma*/
+      running->ticks--;
+      if (running->ticks ==  0){	/*Si la rodaja ha terminado,se desactivan las interrupciones para proteger una zona critica,
+                                    para despues llamar al scheduler y obtener un nuevo proceso */
+		      running->ticks = QUANTUM_TICKS;	
+	      	disable_interrupt();
 	        TCB* next = scheduler();
-		activator(next);	
+	      	activator(next);	
       }
 } 
 
 /* Activator */
 void activator(TCB* next){
-  TCB * procesoActual = running; 
+  TCB * procesoActual = running;  /* Obtenemos el proceso que esta en marcha, y el que quiere introducirse ( next)*/
 
   current = next->tid;
   running = next;
 
-	if(procesoActual->state == FREE){
+	if(procesoActual->state == FREE){ /*Si el proceso en marcha termina imprimimos por pantalla y ponemos el contexto del nuevo */
 	printf("*** THREAD %d TERMINATED : SETCONTEXT OF %d\n", procesoActual->tid, next->tid);
 	enable_interrupt();
 	setcontext (&(next->run_env));
 		
 
 
-	}else{
+	}else{ /*Si el proceso en marcha tendria que seguir su ejecucion, se esta produciendo un cambio de contexto entre dos procesos */
 		printf("*** SWAPCONTEXT FROM %d TO %d\n",procesoActual->tid, next->tid);
 
 		enable_interrupt();
