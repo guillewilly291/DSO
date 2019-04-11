@@ -20,7 +20,7 @@ void disk_interrupt(int sig);
 static TCB t_state[N]; 
 
 /* Current running thread */
-static TCB* running;
+static TCB* running;44444
 static int current = 0;
 
 /* Variable indicating if the library is initialized (init == 1) or not (init == 0) */
